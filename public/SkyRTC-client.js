@@ -10,6 +10,7 @@ var SkyRTC = (function() {
 			"url": "stun:stun.l.google.com:19302"
 		}]
 	};
+	var packetSize = 1000;
 	//事件处理器
 	function EventEmitter() {
 		this.events = {};
@@ -51,6 +52,10 @@ var SkyRTC = (function() {
 		this.initializedStreams = 0;
 		//保存所有的data channel，键为socket id，值通过PeerConnection实例的createChannel创建
 		this.dataChannels = {};
+		//保存所有发文件的data channel及其发文件状态
+		this.fileChannels = {};
+		//保存所有接受到的文件
+		this.receiveFiles = {};
 	}
 	//事件处理器
 	SkyRTC.prototype = new EventEmitter();
@@ -93,6 +98,8 @@ var SkyRTC = (function() {
 
 		socket.onclose = function(data) {
 			delete that.peerConnections[socket.id];
+			delete that.dataChannels[socket.id];
+			delete that.fileChannels[socket.id];
 			that.emit('socket_closed', socket.id);
 		};
 
@@ -121,7 +128,13 @@ var SkyRTC = (function() {
 		});
 
 		this.on('_remove_peer', function(data) {
+			var sendId;
 			delete that.peerConnections[data.socketId];
+			delete that.dataChannels[data.socketId];
+			for (sendId in that.fileChannels[data.socketId]) {
+				that.emit("send_file_error", new Error("Connection has been closed"), sendId, data.socketId, that.fileChannels[data.socketId][sendId].file);
+			}
+			delete that.fileChannels[data.socketId];
 			that.emit("remove_peer", data.socketId);
 		});
 
@@ -133,6 +146,14 @@ var SkyRTC = (function() {
 		this.on('_answer', function(data) {
 			that.receiveAnswer(data.socketId, data.sdp);
 			that.emit('get_answer', data);
+		});
+
+		this.on('send_file_error', function(error, sendId, socketId, file) {
+			that.cleanSendFile(sendId, socketId);
+		});
+
+		this.on('receive_file_error', function(error, sendId) {
+			that.cleanReceiveFile(sendId);
 		});
 
 		this.emit('connected');
@@ -316,15 +337,12 @@ var SkyRTC = (function() {
 		};
 
 		channel.onmessage = function(message) {
-			try {
-				var json = JSON.parse(message.data);
-				if (json.type === '__file') {
-					that.receiveFileChunk(json);
-				} else {
-					that.emit('data_channel_message', channel, socketId, message.data);
-				}
-			} catch (err) {
-				console.log(err);
+			var json;
+			json = JSON.parse(message.data);
+			if (json.type === '__file') {
+				/*that.receiveFileChunk(json);*/
+				that.parseFilePacket(json, socketId);
+			} else {
 				that.emit('data_channel_message', channel, socketId, message.data);
 			}
 		};
@@ -336,91 +354,255 @@ var SkyRTC = (function() {
 		this.dataChannels[socketId] = channel;
 		return channel;
 	};
+	/**********************************************/
+	/*               file transfer                */
+	/**********************************************/
 
-	SkyRTC.prototype.receiveFileChunk = function(json) {
-		var dataURL;
-		this.fileData[json.uuid] = this.fileData[json.uuid] || "";
-		this.fileData[json.uuid] += json.data;
-		if (json.last) {
-			this.getTransferedFile(json.uuid, json.name);
-			delete this.fileData[json.uuid];
-		} else {
-			this.emit("receive_file_chunk", json.uuid, json.name ,json.percent);
+	SkyRTC.prototype.shareFile = function(dom) {
+		var socketId,
+			that = this;
+		for (socketId in that.dataChannels) {
+			that.sendFile(socketId, dom);
 		}
 	};
 
-	SkyRTC.prototype.getTransferedFile = function(uuid, fileName) {
-		var dataURL = this.fileData[uuid];
-		var hyperlink = document.createElement("a");
-		hyperlink.href = dataURL;
-		hyperlink.target = '_blank';
-		hyperlink.download = fileName || dataURL;
-
-		var mouseEvent = new MouseEvent('click', {
-			view: window,
-			bubbles: true,
-			cancelable: true
-		});
-		hyperlink.dispatchEvent(mouseEvent);
-		(window.URL || window.webkitURL).revokeObjectURL(hyperlink.href);
-		this.emit("receive_file", uuid, fileName);
+	SkyRTC.prototype.sendFile = function(socketId, dom) {
+		var that = this,
+			file,
+			reader,
+			fileToSend,
+			sendId;
+		if (typeof dom === 'string') {
+			dom = document.getElementById(dom);
+		}
+		if (!dom) {
+			that.emit("send_file_error", new Error("Can not find dom while sending file"), socketId);
+			return;
+		}
+		if (!dom.files || !dom.files[0]) {
+			that.emit("send_file_error", new Error("No file need to be sended"), socketId);
+			return;
+		}
+		file = dom.files[0];
+		that.fileChannels[socketId] = that.fileChannels[socketId] || {};
+		sendId = that.getRandomString();
+		fileToSend = {
+			file: file,
+			state: "ask"
+		};
+		that.fileChannels[socketId][sendId] = fileToSend;
+		that.sendAsk(socketId, sendId, fileToSend);
+		that.emit("send_file", sendId, socketId, file);
 	};
 
-	SkyRTC.prototype.sendFile = function(dom) {
+	SkyRTC.prototype.parseFilePacket = function(json, socketId) {
+		var signal = json.signal,
+			that = this;
+		if (signal === 'ask') {
+			that.receiveFileAsk(json.sendId, json.name, json.size, socketId);
+		} else if (signal === 'accept') {
+			that.receiveFileAccept(json.sendId, socketId);
+		} else if (signal === 'refuse') {
+			that.receiveFileRefuse(json.sendId, socketId);
+		} else if (signal === 'chunk') {
+			that.receiveFileChunk(json.data, json.sendId, socketId, json.last, json.percent);
+		} else if (signal === 'close') {
+			//TODO
+		}
+	};
+
+	SkyRTC.prototype.receiveFileChunk = function(data, sendId, socketId, last, percent) {
 		var that = this,
-			file = dom.files[0],
-			reader = new window.FileReader(file),
-			getRandomString = function() {
-				return (Math.random() * new Date().getTime()).toString(36).toUpperCase().replace(/\./g, '-');
-			},
-			uuid = getRandomString(),
-			packetSize = 1000,
-			packetsToSend = 0,
-			textToTransfer = '',
-			sendedPackets = 0,
-			allPackets = 0,
-			sendChunk = function(event, fileData) {
-				var _packet = {
-					type: "__file",
-					uuid: uuid,
-					name: file.name
-				};
-				if (event) {
-					fileData = event.target.result;
-					allPackets = packetsToSend = parseInt(fileData.length / packetSize, 10);
-				}
+			fileInfo = that.receiveFiles[sendId];
+		if (!fileInfo.data) {
+			fileInfo.state = "receive";
+			fileInfo.data = "";
+		}
+		fileInfo.data = fileInfo.data || "";
+		fileInfo.data += data;
+		if (last) {
+			fileInfo.state = "end";
+			that.getTransferedFile(sendId);
+		} else {
+			that.emit("receive_file_chunk", sendId, socketId, fileInfo.name, percent);
+		}
+	};
 
-				sendedPackets++;
-				packetsToSend--;
+	SkyRTC.prototype.getTransferedFile = function(sendId) {
+		var that = this,
+			fileInfo = that.receiveFiles[sendId],
+			hyperlink = document.createElement("a"),
+			mouseEvent = new MouseEvent('click', {
+				view: window,
+				bubbles: true,
+				cancelable: true
+			});
+		hyperlink.href = fileInfo.data;
+		hyperlink.target = '_blank';
+		hyperlink.download = fileInfo.name || dataURL;
 
-				
-				if (fileData.length > packetSize) {
-					_packet.data = fileData.slice(0, packetSize);
-					_packet.percent = sendedPackets/ allPackets * 100;
-					that.emit("send_file_chunk", sendedPackets/ allPackets * 100, file);
-				} else {
-					_packet.data = fileData;
-					_packet.last = true;
-					that.emit("sended_file", file);
-				}
+		hyperlink.dispatchEvent(mouseEvent);
+		(window.URL || window.webkitURL).revokeObjectURL(hyperlink.href);
+		that.emit("receive_file", sendId, fileInfo.socketId, fileInfo.name);
+		that.cleanReceiveFile(sendId);
+	};
 
+	SkyRTC.prototype.receiveFileAsk = function(sendId, fileName, fileSize, socketId) {
+		var that = this;
+		that.receiveFiles[sendId] = {
+			socketId: socketId,
+			state: "ask",
+			name: fileName,
+			size: fileSize
+		};
+		that.emit("receive_file_ask", sendId, socketId, fileName, fileSize);
+	};
 
-				that.broadcast(JSON.stringify(_packet));
+	SkyRTC.prototype.receiveFileRefuse = function(sendId, socketId) {
+		var that = this;
+		that.fileChannels[socketId][sendId].state = "refused";
+		that.emit("send_file_refused", sendId, socketId, that.fileChannels[socketId][sendId].file);
+		that.cleanSendFile(sendId, socketId);
+	};
 
-				textToTransfer = fileData.slice(_packet.data.length);
-
-
-
-				if (textToTransfer.length) {
-					setTimeout(function() {
-						sendChunk(null, textToTransfer);
-					}, moz ? 1 : 500);
-				}
+	SkyRTC.prototype.receiveFileAccept = function(sendId, socketId) {
+		var that = this,
+			fileToSend,
+			reader,
+			initSending = function(event, text) {
+				fileToSend.state = "send";
+				fileToSend.fileData = event.target.result;
+				fileToSend.sendedPackets = 0;
+				fileToSend.packetsToSend = fileToSend.allPackets = parseInt(fileToSend.fileData.length / packetSize, 10);
+				that.sendFileChunks();
 			};
+		fileToSend = that.fileChannels[socketId][sendId];
+		reader = new window.FileReader(fileToSend.file);
+		reader.readAsDataURL(fileToSend.file);
+		reader.onload = initSending;
+		that.emit("send_file_accepted", sendId, socketId, that.fileChannels[socketId][sendId].file);
+	};
+
+	SkyRTC.prototype.sendFileChunks = function() {
+		var socketId,
+			sendId,
+			that = this,
+			nextTick = false;
+		for (socketId in that.fileChannels) {
+			for (sendId in that.fileChannels[socketId]) {
+				if (that.fileChannels[socketId][sendId].state === "send") {
+					nextTick = true;
+					that.sendFileChunk(socketId, sendId);
+				}
+			}
+		}
+		if (nextTick) {
+			setTimeout(function() {
+				that.sendFileChunks();
+			}, 10);
+		}
+	};
+
+	SkyRTC.prototype.sendFileChunk = function(socketId, sendId) {
+		var that = this,
+			fileToSend = that.fileChannels[socketId][sendId],
+			packet = {
+				type: "__file",
+				signal: "chunk",
+				sendId: sendId
+			},
+			channel;
+
+		fileToSend.sendedPackets++;
+		fileToSend.packetsToSend--;
 
 
-		reader.readAsDataURL(file);
-		reader.onload = sendChunk;
+		if (fileToSend.fileData.length > packetSize) {
+			packet.last = false;
+			packet.data = fileToSend.fileData.slice(0, packetSize);
+			packet.percent = fileToSend.sendedPackets / fileToSend.allPackets * 100;
+			that.emit("send_file_chunk", sendId, socketId, fileToSend.sendedPackets / fileToSend.allPackets * 100, fileToSend.file);
+		} else {
+			packet.data = fileToSend.fileData;
+			packet.last = true;
+			fileToSend.state = "end";
+			that.emit("sended_file", sendId, socketId, fileToSend.file);
+			that.cleanSendFile(sendId, socketId);
+		}
+
+		channel = that.dataChannels[socketId];
+
+		if (!channel) {
+			that.emit("send_file_error", new Error("Channel has been destoried"), sendId, socketId, fileToSend.file);
+			return;
+		}
+		channel.send(JSON.stringify(packet));
+		fileToSend.fileData = fileToSend.fileData.slice(packet.data.length);
+	};
+
+	SkyRTC.prototype.cleanSendFile = function(sendId, socketId) {
+		var that = this;
+		delete that.fileChannels[socketId][sendId];
+	};
+
+	SkyRTC.prototype.sendFileAccept = function(sendId) {
+		console.log(sendId, this.receiveFiles);
+		var that = this,
+			fileInfo = that.receiveFiles[sendId],
+			channel = that.dataChannels[fileInfo.socketId],
+			packet;
+		if (!channel) {
+			that.emit("receive_file_error", new Error("Channel has been destoried"), sendId, socketId);
+		}
+		packet = {
+			type: "__file",
+			signal: "accept",
+			sendId: sendId
+		};
+		channel.send(JSON.stringify(packet));
+	};
+
+	SkyRTC.prototype.sendFileRefuse = function(sendId) {
+		var that = this,
+			fileInfo = that.receiveFiles[sendId],
+			channel = that.dataChannels[fileInfo.socketId],
+			packet;
+		if (!channel) {
+			that.emit("receive_file_error", new Error("Channel has been destoried"), sendId, socketId);
+		}
+		packet = {
+			type: "__file",
+			signal: "refuse",
+			sendId: sendId
+		};
+		channel.send(JSON.stringify(packet));
+		that.cleanReceiveFile(sendId);
+	};
+
+	SkyRTC.prototype.cleanReceiveFile = function(sendId) {
+		var that = this;
+		delete that.receiveFiles[sendId];
+	};
+
+	SkyRTC.prototype.sendAsk = function(socketId, sendId, fileToSend) {
+		var that = this,
+			channel = that.dataChannels[socketId],
+			packet;
+		if (!channel) {
+			that.emit("send_file_error", new Error("Channel has been closed"), sendId, socketId, fileToSend.file);
+		}
+		packet = {
+			name: fileToSend.file.name,
+			size: fileToSend.file.size,
+			sendId: sendId,
+			type: "__file",
+			signal: "ask"
+		};
+		channel.send(JSON.stringify(packet));
+	};
+
+	SkyRTC.prototype.getRandomString = function() {
+		return (Math.random() * new Date().getTime()).toString(36).toUpperCase().replace(/\./g, '-');
 	};
 
 	var rtc = new SkyRTC();

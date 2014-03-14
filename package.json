@@ -1,7 +1,7 @@
 {
-	"name": "demo",
-	"version": "0.0.1",
-	"description": "Drop-in client code for webrtc.io",
+	"name": "SkyRTC-demo",
+	"version": "0.1.0",
+	"description": "Add file transfer manager, can transfer multi-file at the same time",
 	"dependencies": {
 		"ws": ">= 0.0.0",
 		"node-uuid": ">= 1.4.1",

@@ -57,6 +57,18 @@
     #chat .msgs p{
       margin: 0.3em 0;
     }
+    #files {
+      position: absolute;
+      bottom: 0;
+      right: 0;
+      width: 20%;
+    }
+    #files .name {
+    }
+    #files .percent {
+      font-weight: bold;
+      text-decoration: none
+    }
   </style>
 </head>
 <body>
@@ -70,6 +82,8 @@
   <div id="videos">
     <video id="me" autoplay></video>
   </div>
+  <div id="files">
+  </div>
 </body>
 <script type="text/javascript" src="/SkyRTC-client.js"></script>
 <script type="text/javascript">
@@ -77,7 +91,10 @@
   var sendBtn = document.getElementById("sendBtn");
   var msgs = document.getElementById("msgs");
   var sendFileBtn = document.getElementById("sendFileBtn");
+  var files = document.getElementById("files");
 
+
+  /**********************************************************/
   sendBtn.onclick = function(event){
     var msgIpt = document.getElementById("msgIpt");
     var msg = msgIpt.value;
@@ -86,8 +103,67 @@
   };
 
   sendFileBtn.onclick = function(event){
-    SkyRTC.sendFile(document.getElementById("fileIpt"));
+    SkyRTC.shareFile("fileIpt");
   };
+  /**********************************************************/
+
+  SkyRTC.on("send_file_accepted", function(sendId, socketId, file){
+    var p = document.getElementById("sf-" + sendId);
+    p.innerText = "对方接收" + file.name + "文件，等待发送";
+
+  });
+
+  SkyRTC.on("send_file_refused", function(sendId, socketId, file){
+    var p = document.getElementById("sf-" + sendId);
+    p.innerText = "对方拒绝接收" + file.name + "文件";
+  });
+
+  SkyRTC.on('send_file', function(sendId, socketId, file){
+    var p = document.createElement("p");
+    p.innerText = "请求发送" + file.name + "文件";
+    p.id = "sf-" + sendId;
+    files.appendChild(p);
+  });
+
+  SkyRTC.on('sended_file', function(sendId, socketId, file){
+    var p = document.getElementById("sf-" + sendId);
+    p.parentNode.removeChild(p);
+  });
+
+  SkyRTC.on('send_file_chunk', function(sendId, socketId, percent, file){
+    var p = document.getElementById("sf-" + sendId);
+    p.innerText = file.name + "文件正在发送: " + Math.ceil(percent) + "%";
+  });
+
+  SkyRTC.on('receive_file_chunk', function(sendId, socketId, fileName, percent){
+    var p = document.getElementById("rf-" + sendId);
+    p.innerText = "正在接收" + fileName + "文件：" +  Math.ceil(percent) + "%";
+  });
+  SkyRTC.on('receive_file', function(sendId, socketId, name){
+    var p = document.getElementById("rf-" + sendId);
+    p.parentNode.removeChild(p);
+  });
+
+  SkyRTC.on('send_file_error', function(error){
+    console.log(error);
+  });
+
+  SkyRTC.on('receive_file_error', function(error){
+    console.log(error);
+  });
+
+  SkyRTC.on('receive_file_ask', function(sendId, socketId, fileName, fileSize){
+    var p;
+    if (window.confirm(socketId + "用户想要给你传送" + fileName + "文件，大小" + fileSize + "KB,是否接受？")) {
+      SkyRTC.sendFileAccept(sendId);
+      p = document.createElement("p");
+      p.innerText = "准备接收" + fileName + "文件";
+      p.id = "rf-" + sendId;
+      files.appendChild(p);
+    } else {
+      SkyRTC.sendFileRefuse(sendId);
+    }
+  });
 
   SkyRTC.on("connected", function() {
     SkyRTC.createStream({
@@ -127,20 +203,6 @@
     var pNode = document.createElement("p");
     pNode.appendChild(textNode);
     msgs.appendChild(pNode);
-  });
-
-  SkyRTC.on('send_file', function(file){
-    console.log("start to send file " + file.name);
-  });
-
-  SkyRTC.on('send_file_chunk', function(percent, file){
-    console.log("sending file " + file.name + ": " + percent + "%");
-  });
-  SkyRTC.on('receive_file_chunk', function(uuid, name, percent){
-    console.log("receiving file " + name + ":" + percent + "%");
-  });
-  SkyRTC.on('receive_file', function(uuid, name){
-    console.log("received file " + name);
   });
 
   SkyRTC.connect("ws:" + window.location.href.substring(window.location.protocol.length).split('#')[0]);
