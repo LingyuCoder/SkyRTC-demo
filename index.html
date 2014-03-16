@@ -205,6 +205,6 @@
     msgs.appendChild(pNode);
   });
 
-  SkyRTC.connect("ws:" + window.location.href.substring(window.location.protocol.length).split('#')[0]);
+  SkyRTC.connect("ws:" + window.location.href.substring(window.location.protocol.length).split('#')[0], window.location.hash.slice(1));
 </script>
 </html>
