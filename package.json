@@ -1,6 +1,6 @@
 {
 	"name": "SkyRTC-demo",
-	"description": "Add file transfer manager, can transfer multi-file at the same time",
+	"description": "A simple SkyRTC demo",
 	"dependencies": {
 		"ws": ">= 0.0.0",
 		"node-uuid": ">= 1.4.1",

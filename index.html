@@ -96,10 +96,13 @@
 
   /**********************************************************/
   sendBtn.onclick = function(event){
-    var msgIpt = document.getElementById("msgIpt");
-    var msg = msgIpt.value;
+    var msgIpt = document.getElementById("msgIpt"),
+        msg = msgIpt.value,
+        p = document.createElement("p");
+    p.innerText = "me: " + msg;
     SkyRTC.broadcast(msg);
     msgIpt.value = "";
+    msgs.appendChild(p);
   };
 
   sendFileBtn.onclick = function(event){
@@ -199,9 +202,8 @@
   });
 
   SkyRTC.on('data_channel_message', function(channel, socketId, message){
-    var textNode = document.createTextNode(socketId + ": " + message);
     var pNode = document.createElement("p");
-    pNode.appendChild(textNode);
+    p.innerText = socketId + ": " + message;
     msgs.appendChild(pNode);
   });
 

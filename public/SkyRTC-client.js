@@ -15,12 +15,12 @@ var SkyRTC = (function() {
 	function EventEmitter() {
 		this.events = {};
 	}
-
+	//绑定事件函数
 	EventEmitter.prototype.on = function(eventName, callback) {
 		this.events[eventName] = this.events[eventName] || [];
 		this.events[eventName].push(callback);
 	};
-
+	//触发事件函数
 	EventEmitter.prototype.emit = function(eventName, _) {
 		var events = this.events[eventName],
 			args = Array.prototype.slice.call(arguments, 1),
@@ -35,6 +35,9 @@ var SkyRTC = (function() {
 	};
 
 	function SkyRTC() {
+		//房间
+		this.room = "";
+		//接收文件时用于暂存接收文件
 		this.fileData = {};
 		//本地WebSocket连接
 		this.socket = null;
@@ -57,28 +60,33 @@ var SkyRTC = (function() {
 		//保存所有接受到的文件
 		this.receiveFiles = {};
 	}
-	//事件处理器
+	//继承自事件处理器，提供绑定事件和触发事件的功能
 	SkyRTC.prototype = new EventEmitter();
-	//通过dataChannels进行广播
+	//消息广播
 	SkyRTC.prototype.broadcast = function(message) {
 		var socketId;
 		for (socketId in this.dataChannels) {
 			this.sendMessage(message, socketId);
 		}
 	};
+	//发送消息方法
 	SkyRTC.prototype.sendMessage = function(message, socketId) {
 		if (this.dataChannels[socketId].readyState.toLowerCase() === 'open') {
 			this.dataChannels[socketId].send(message);
 		}
 	};
 	//本地连接信道，信道为websocket
-	SkyRTC.prototype.connect = function(server) {
+	SkyRTC.prototype.connect = function(server, room) {
 		var socket,
 			that = this;
+		room = room || "";
 		socket = this.socket = new WebSocket(server);
 		socket.onopen = function() {
 			socket.send(JSON.stringify({
-				"eventName": "__join"
+				"eventName": "__join",
+				"data": {
+					"room": room
+				}
 			}));
 			that.emit("socket_opened", socket);
 		};
