@@ -6,5 +6,6 @@
 		"node-uuid": ">= 1.4.1",
 		"express": "3.1.0",
 		"skyrtc": ">= 0.0.0"
-	}
+	},
+	"readmeFilename": "README.md"
 }
