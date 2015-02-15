@@ -4,7 +4,7 @@ var SkyRTC = function() {
     var getUserMedia = (navigator.getUserMedia || navigator.webkitGetUserMedia || navigator.mozGetUserMedia || navigator.msGetUserMedia);
     var nativeRTCIceCandidate = (window.mozRTCIceCandidate || window.RTCIceCandidate);
     var nativeRTCSessionDescription = (window.mozRTCSessionDescription || window.RTCSessionDescription); // order is very important: "RTCSessionDescription" defined in Nighly but useless
-    var moz = !! navigator.mozGetUserMedia;
+    var moz = !!navigator.mozGetUserMedia;
     var iceServer = {
         "iceServers": [{
             "url": "stun:stun.l.google.com:19302"
@@ -120,7 +120,7 @@ var SkyRTC = function() {
             that.dataChannels = {};
             that.fileChannels = {};
             that.connections = [];
-            tjat.fileData = {};
+            that.fileData = {};
             that.emit('socket_closed', socket);
         };
 
@@ -129,6 +129,7 @@ var SkyRTC = function() {
             that.connections = data.connections;
             that.me = data.you;
             that.emit("get_peers", that.connections);
+            that.emit('connected', socket);
         });
 
         this.on("_ice_candidate", function(data) {
@@ -182,8 +183,6 @@ var SkyRTC = function() {
             that.addDataChannels();
             that.sendOffers();
         });
-
-        this.emit('connected', socket);
     };
 
 
@@ -194,8 +193,8 @@ var SkyRTC = function() {
     skyrtc.prototype.createStream = function(options) {
         var that = this;
 
-        options.video = !! options.video;
-        options.audio = !! options.audio;
+        options.video = !!options.video;
+        options.audio = !!options.audio;
 
         if (getUserMedia) {
             this.numStreams++;
@@ -214,7 +213,7 @@ var SkyRTC = function() {
             that.emit("stream_create_error", new Error('WebRTC is not yet supported in this browser.'));
         }
     };
-    
+
     //将本地流添加到所有的PeerConnection实例中
     skyrtc.prototype.addStreams = function() {
         var i, m,
@@ -305,7 +304,7 @@ var SkyRTC = function() {
     //创建与其他用户连接的PeerConnections
     skyrtc.prototype.createPeerConnections = function() {
         var i, m;
-        for (i = 0, m = rtc.connections.length; i < m; i++) {
+        for (i = 0, m = this.connections.length; i < m; i++) {
             this.createPeerConnection(this.connections[i]);
         }
     };
@@ -348,11 +347,11 @@ var SkyRTC = function() {
         if (!pc) return;
         pc.close();
     };
-    
+
 
     /***********************数据通道连接部分*****************************/
 
-    
+
     //消息广播
     skyrtc.prototype.broadcast = function(message) {
         var socketId;
@@ -370,7 +369,7 @@ var SkyRTC = function() {
             }));
         }
     };
-    
+
     //对所有的PeerConnections创建Data channel
     skyrtc.prototype.addDataChannels = function() {
         var connection;
@@ -667,7 +666,7 @@ var SkyRTC = function() {
         };
         that.emit("receive_file_ask", sendId, socketId, fileName, fileSize);
     };
-   
+
     //发送同意接收文件信令
     skyrtc.prototype.sendFileAccept = function(sendId) {
         var that = this,
